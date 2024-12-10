@@ -1,6 +1,7 @@
 package io.lettuce.core.protocol;
 
 import io.netty.channel.ChannelDuplexHandler;
+import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPromise;
 import io.netty.util.AttributeKey;
@@ -66,7 +67,15 @@ public class AuthenticationHandler extends ChannelDuplexHandler {
 
     private void replayDeferred(ChannelHandlerContext ctx) {
         if (deferredAuthCmd != null) {
-            ctx.channel().pipeline().writeAndFlush(deferredAuthCmd);
+            ChannelFuture future = ctx.channel().pipeline().writeAndFlush(deferredAuthCmd);
+            future.addListener(f -> {
+                if (f.isSuccess()) {
+                    deferredAuthCmd.complete();
+                } else {
+                    deferredAuthCmd.completeExceptionally(f.cause());
+                }
+                deferredAuthCmd = null;
+            });
             deferredAuthCmd = null;  // Clear the deferred command after flushing
         }
     }
