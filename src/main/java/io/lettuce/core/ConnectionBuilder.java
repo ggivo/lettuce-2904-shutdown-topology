@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
+import io.lettuce.core.protocol.AuthenticationHandler;
 import jdk.net.ExtendedSocketOptions;
 import reactor.core.publisher.Mono;
 import io.lettuce.core.internal.LettuceAssert;
@@ -119,7 +120,7 @@ public class ConnectionBuilder {
         LettuceAssert.assertState(connection != null, "Connection must be set");
         LettuceAssert.assertState(clientResources != null, "ClientResources must be set");
 
-        RedisAuthenticationHandler authenticationHandler = new RedisAuthenticationHandler(connection, credentialsProvider,
+        RedisAuthenticationHandler authenticationHandler = new RedisAuthenticationHandler(connection.getChannelWriter(), credentialsProvider,
                 state, clientResources.eventBus(), isPubSubConnection);
         endpoint.registerAuthenticationHandler(authenticationHandler);
     }
@@ -140,7 +141,19 @@ public class ConnectionBuilder {
         handlers.add(new ChannelGroupListener(channelGroup, clientResources.eventBus()));
         handlers.add(new CommandEncoder());
         handlers.add(getHandshakeHandler());
+
+        // Add new AuthenticationHandler() before & after command commandHandler to handle re-authentication
+        // before -> buffers the auth command if in transaction
+        // after  -> replays the auth command if transaction ends
+        if (clientOptions.getReauthenticateBehaviour() == ClientOptions.ReauthenticateBehavior.ON_NEW_CREDENTIALS){
+            handlers.add(new AuthenticationHandler());
+        }
+
         handlers.add(commandHandlerSupplier.get());
+
+        if (clientOptions.getReauthenticateBehaviour() == ClientOptions.ReauthenticateBehavior.ON_NEW_CREDENTIALS){
+            handlers.add(new AuthenticationHandler());
+        }
 
         handlers.add(new ConnectionEventTrigger(connectionEvents, connection, clientResources.eventBus()));
 

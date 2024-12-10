@@ -20,6 +20,7 @@
 package io.lettuce.core.protocol;
 
 import static io.lettuce.core.ConnectionEvents.*;
+import static io.lettuce.core.protocol.AuthenticationHandler.IN_TX;
 
 import java.io.IOException;
 import java.net.SocketAddress;
@@ -61,6 +62,7 @@ import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPromise;
 import io.netty.channel.local.LocalAddress;
+import io.netty.util.AttributeKey;
 import io.netty.util.Recycler;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.GenericFutureListener;
@@ -417,6 +419,8 @@ public class CommandHandler extends ChannelDuplexHandler implements HasQueuedCom
         }
     }
 
+
+
     private void writeSingleCommand(ChannelHandlerContext ctx, RedisCommand<?, ?, ?> command, ChannelPromise promise) {
 
         if (!isWriteable(command)) {
@@ -429,6 +433,25 @@ public class CommandHandler extends ChannelDuplexHandler implements HasQueuedCom
         attachTracing(ctx, command);
 
         ctx.write(command, promise);
+
+        setInTx(ctx, command);
+    }
+
+    private void setInTx(ChannelHandlerContext ctx, RedisCommand<?, ?, ?> command) {
+        if (command.getType() == CommandType.MULTI) {
+            ctx.channel().attr(IN_TX).set(true);
+            ctx.fireUserEventTriggered(new TxStarted());
+        }
+
+        if (command.getType() == CommandType.EXEC) {
+            ctx.channel().attr(IN_TX).set(false);
+            ctx.fireUserEventTriggered(new TxEnded());
+        }
+
+        if (command.getType() == CommandType.DISCARD) {
+            ctx.channel().attr(IN_TX).set(false);
+            ctx.fireUserEventTriggered(new TxEnded());
+        }
     }
 
     private void writeBatch(ChannelHandlerContext ctx, Collection<RedisCommand<?, ?, ?>> batch, ChannelPromise promise) {
@@ -458,6 +481,8 @@ public class CommandHandler extends ChannelDuplexHandler implements HasQueuedCom
         for (RedisCommand<?, ?, ?> command : deduplicated) {
             attachTracing(ctx, command);
             addToStack(command, promise);
+
+            setInTx(ctx, command);
         }
 
         if (!deduplicated.isEmpty()) {
@@ -1092,4 +1117,17 @@ public class CommandHandler extends ChannelDuplexHandler implements HasQueuedCom
 
     }
 
+    /**
+     * Internal event when a stransaction start command is issued.
+     * e.g. MULTI
+     */
+    public static class TxStarted {
+    }
+
+    /**
+     * Internal event when a transaction end command is issued.
+     * e.g. DISCARD, EXEC
+     */
+    public static class TxEnded {
+    }
 }
